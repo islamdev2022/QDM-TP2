@@ -1,0 +1,14 @@
+PRCC SROC RMSE
+they are calculated between SSIM and DMoS arrays (with results of the entire database) and they are already calculated in the dataset
+Then do the same for each type of degradation separately (at first do it global 5 arrays together)
+Then the improvement of SSIM
+The teacher will choose an original image and a degraded image to calculate SSIM and SSIM'
+
+Rapport Theory part where you explain SSIM and our improvement 
+When putting the value table we comment it
+
+
+first 
+function to iterate each image by its ref and deg image (done)
+extract dmos from the file
+calculate ssim of each ref image with it multiple deg images , create a table of each deg folder 
