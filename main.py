@@ -1,495 +1,414 @@
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
 import cv2
 import numpy as np
 import scipy.io
 import os
-import tkinter as tk
-from tkinter import filedialog
+import threading
+import tempfile
+import shutil
 from functions import file_paths, calculate_prcc, calculate_sroc, calculate_rmse, calc_ssim, calc_msssim
 
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
-def calculate_all_metrics(metric_function, metric_name):
-    """
-    Calculate a metric for all reference images with their degraded versions.
-    Returns a dictionary with metric values organized by degradation type.
-    
-    Args:
-        metric_function: Function to calculate the metric (calc_ssim or calc_msssim)
-        metric_name: Name of the metric for display purposes
-    """
-    # Get the file paths structure
-    images_dict = file_paths()
-    
-    # Base paths
-    ref_path = r"C:\Users\Hassiba Informatique\Desktop\Masters Degree\M2\QDM\dataset\refimgs"
-    dataset_path = r"C:\Users\Hassiba Informatique\Desktop\Masters Degree\M2\QDM\dataset"
-    
-    # Initialize arrays for each degradation type
-    metric_fastfading = []
-    metric_gblur = []
-    metric_jp2k = []
-    metric_jpeg = []
-    metric_wn = []
-    
-    # Dictionary to map degradation types to their arrays
-    metric_arrays = {
-        'fastfading': metric_fastfading,
-        'gblur': metric_gblur,
-        'jp2k': metric_jp2k,
-        'jpeg': metric_jpeg,
-        'wn': metric_wn
-    }
-    
-    print(f"\n{'='*60}")
-    print(f"CALCULATING {metric_name}")
-    print(f"{'='*60}")
-    
-    # Process each reference image
-    for ref_image_name, degradations in images_dict.items():
-        print(f"\nProcessing reference image: {ref_image_name}")
+class ImageQualityAssessmentApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
         
-        # Load reference image
-        ref_image_path = f"{ref_path}\\{ref_image_name}"
-        ref_img = cv2.imread(ref_image_path)
+        self.title("Image Quality Assessment Tool - SSIM vs MS-SSIM")
+        self.geometry("1400x950")
         
-        if ref_img is None:
-            print(f"  Warning: Could not load reference image {ref_image_path}")
-            continue
+        # Dataset path
+        self.dataset_path = ctk.StringVar(value="")
         
-        # Process each degradation type for this reference image
-        for deg_type, deg_images_list in degradations.items():
-            # deg_images_list contains: [img_name1, value1, img_name2, value2, ...]
-            # We need to extract only the image names (every other element starting from index 0)
-            deg_image_names = [deg_images_list[i] for i in range(0, len(deg_images_list), 2)]
-            
-            print(f"  Processing {deg_type}: {len(deg_image_names)} images")
-            
-            # Calculate metric for each degraded image
-            for deg_img_name in deg_image_names:
-                deg_image_path = f"{dataset_path}\\{deg_type}\\{deg_img_name}"
-                deg_img = cv2.imread(deg_image_path)
-                
-                if deg_img is None:
-                    print(f"    Warning: Could not load {deg_image_path}")
-                    continue
-                
-                # Resize degraded image to match reference image dimensions if needed
-                if deg_img.shape != ref_img.shape:
-                    deg_img = cv2.resize(deg_img, (ref_img.shape[1], ref_img.shape[0]))
-                
-                # Calculate metric
-                metric_value = metric_function(ref_img, deg_img)
-                metric_arrays[deg_type].append(metric_value)
-                
-                print(f"    {deg_img_name}: {metric_name} = {metric_value:.4f}")
-    
-    # Create global array containing all metric values in the order: jp2k, jpeg, wn, gblur, fastfading
-    global_metric_array = []
-    for deg_type in ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading']:
-        global_metric_array.extend(metric_arrays[deg_type])
-    
-    # Print summary
-    print(f"\n{'='*60}")
-    print(f"SUMMARY OF {metric_name} CALCULATIONS")
-    print(f"{'='*60}")
-    for deg_type in ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading']:
-        arr = metric_arrays[deg_type]
-        print(f"\n{deg_type.upper()}:")
-        print(f"  Total images: {len(arr)}")
-        if len(arr) > 0:
-            print(f"  {metric_name} - Min: {np.min(arr):.4f}, Max: {np.max(arr):.4f}, Mean: {np.mean(arr):.4f}")
-            print(f"  First 5 values: {[f'{v:.4f}' for v in arr[:5]]}")
-    
-    print(f"\nGLOBAL ARRAY:")
-    print(f"  Total {metric_name} values: {len(global_metric_array)}")
-    if len(global_metric_array) > 0:
-        print(f"  {metric_name} - Min: {np.min(global_metric_array):.4f}, Max: {np.max(global_metric_array):.4f}, Mean: {np.mean(global_metric_array):.4f}")
-    
-    return {
-        'fastfading': metric_fastfading,
-        'gblur': metric_gblur,
-        'jp2k': metric_jp2k,
-        'jpeg': metric_jpeg,
-        'wn': metric_wn,
-        'global': global_metric_array
-    }
-
-
-def extract_dmos_arrays(metric_results):
-    """
-    Extract DMOS arrays by slicing the global DMOS array based on metric array lengths.
-    The order in dmos.mat matches the order: jp2k, jpeg, wn, gblur, fastfading
-    """
-    # Load DMOS from mat file
-    mat_file_path = r"C:\Users\Hassiba Informatique\Desktop\Masters Degree\M2\QDM\dataset\dmos.mat"
-    mat_data = scipy.io.loadmat(mat_file_path)
-    
-    # Extract the DMOS array
-    dmos_global = None
-    for key in mat_data.keys():
-        if not key.startswith('__'):
-            if isinstance(mat_data[key], np.ndarray):
-                dmos_global = mat_data[key][0]
-                break
-    
-    if dmos_global is None:
-        raise ValueError("Could not find DMOS data in mat file")
-    
-    print(f"\nLoaded global DMOS array with {len(dmos_global)} values")
-    
-    # The order in the dmos.mat file is: jp2k, jpeg, wn, gblur, fastfading
-    # We need to slice based on the metric array lengths
-    dmos_arrays = {
-        'jp2k': [],
-        'jpeg': [],
-        'wn': [],
-        'gblur': [],
-        'fastfading': [],
-        'global': dmos_global.tolist()
-    }
-    
-    # Get the counts for each degradation type
-    counts = {
-        'jp2k': len(metric_results['jp2k']),
-        'jpeg': len(metric_results['jpeg']),
-        'wn': len(metric_results['wn']),
-        'gblur': len(metric_results['gblur']),
-        'fastfading': len(metric_results['fastfading'])
-    }
-    
-    print("\nMetric array lengths:")
-    for deg_type in ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading']:
-        print(f"  {deg_type}: {counts[deg_type]}")
-    
-    # Slice the global DMOS array according to the order in the mat file
-    start_idx = 0
-    for deg_type in ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading']:
-        count = counts[deg_type]
-        dmos_arrays[deg_type] = dmos_global[start_idx:start_idx + count].tolist()
-        start_idx += count
-    
-    # Print summary
-    print("\n" + "="*60)
-    print("SUMMARY OF DMOS EXTRACTION")
-    print("="*60)
-    for deg_type in ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading']:
-        arr = dmos_arrays[deg_type]
-        print(f"\n{deg_type.upper()}:")
-        print(f"  Total DMOS values: {len(arr)}")
-        if len(arr) > 0:
-            print(f"  DMOS - Min: {np.min(arr):.4f}, Max: {np.max(arr):.4f}, Mean: {np.mean(arr):.4f}")
-            print(f"  First 5 values: {[f'{v:.4f}' for v in arr[:5]]}")
-    
-    print(f"\nGLOBAL DMOS ARRAY:")
-    print(f"  Total DMOS values: {len(dmos_arrays['global'])}")
-    print(f"  DMOS - Min: {np.min(dmos_arrays['global']):.4f}, Max: {np.max(dmos_arrays['global']):.4f}, Mean: {np.mean(dmos_arrays['global']):.4f}")
-    
-    return dmos_arrays
-
-
-def calculate_performance_metrics(metric_results, dmos_results, metric_name):
-    """
-    Calculate PRCC, SROC, and RMSE for all degradation types and global.
-    """
-    print("\n" + "="*60)
-    print(f"CALCULATING PERFORMANCE METRICS FOR {metric_name}")
-    print("="*60)
-    
-    metrics = {}
-    
-    # List of degradation types
-    deg_types = ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading', 'global']
-    
-    for deg_type in deg_types:
-        metric_array = metric_results[deg_type]
-        dmos_array = dmos_results[deg_type]
+        # Configure grid
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
         
-        print(f"\n{deg_type.upper()}:")
-        print(f"  {metric_name} array length: {len(metric_array)}")
-        print(f"  DMOS array length: {len(dmos_array)}")
+        # Create header
+        self.create_header()
         
-        if len(metric_array) != len(dmos_array):
-            print(f"  ERROR: Array length mismatch!")
-            metrics[deg_type] = {'prcc': None, 'sroc': None, 'rmse': None}
-            continue
+        # Create tabview
+        self.create_tabview()
         
-        if len(metric_array) < 2:
-            print(f"  ERROR: Not enough data points!")
-            metrics[deg_type] = {'prcc': None, 'sroc': None, 'rmse': None}
-            continue
+        # Store selected images
+        self.ref_image = None
+        self.ref_image_path = None
+        self.ref_image_name = None
+        self.deg_image = None
+        self.deg_image_path = None
+        self.deg_type = None
+        self.temp_dir = None
+    
+    def create_header(self):
+        """Create the header section with dataset path selection"""
+        header_frame = ctk.CTkFrame(self, fg_color=("gray90", "gray15"), corner_radius=15)
+        header_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 10))
+        header_frame.grid_columnconfigure(1, weight=1)
         
-        # Calculate metrics
-        try:
-            prcc = calculate_prcc(metric_array, dmos_array)
-            sroc = calculate_sroc(metric_array, dmos_array)
-            rmse = calculate_rmse(metric_array, dmos_array)
-            
-            metrics[deg_type] = {
-                'prcc': prcc,
-                'sroc': sroc,
-                'rmse': rmse
-            }
-            
-            print(f"  PRCC: {prcc:.4f}")
-            print(f"  SROC: {sroc:.4f}")
-            print(f"  RMSE: {rmse:.4f}")
-        except Exception as e:
-            print(f"  ERROR calculating metrics: {e}")
-            metrics[deg_type] = {'prcc': None, 'sroc': None, 'rmse': None}
-    
-    return metrics
-
-
-def print_metrics_table(metrics, metric_name):
-    """
-    Print a summary table of all metrics.
-    """
-    print("\n" + "="*60)
-    print(f"{metric_name} PERFORMANCE METRICS SUMMARY")
-    print("="*60)
-    print(f"\n{'Degradation Type':<15} {'PRCC':<10} {'SROC':<10} {'RMSE':<10}")
-    print("-" * 60)
-    
-    for deg_type in ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading', 'global']:
-        if deg_type in metrics and metrics[deg_type]['prcc'] is not None:
-            prcc = metrics[deg_type]['prcc']
-            sroc = metrics[deg_type]['sroc']
-            rmse = metrics[deg_type]['rmse']
-            print(f"{deg_type.upper():<15} {prcc:<10.4f} {sroc:<10.4f} {rmse:<10.4f}")
-        else:
-            print(f"{deg_type.upper():<15} {'N/A':<10} {'N/A':<10} {'N/A':<10}")
-    
-    print("="*60)
-
-
-def compare_metrics(ssim_metrics, msssim_metrics):
-    """
-    Compare SSIM and MS-SSIM performance metrics side by side.
-    """
-    print("\n" + "="*70)
-    print("COMPARISON: SSIM vs MS-SSIM")
-    print("="*70)
-    
-    deg_types = ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading', 'global']
-    
-    # PRCC Comparison
-    print("\n" + "-"*70)
-    print("PRCC (Pearson Correlation) - Higher is Better")
-    print("-"*70)
-    print(f"{'Degradation':<15} {'SSIM':<12} {'MS-SSIM':<12} {'Improvement':<15} {'Winner':<10}")
-    print("-"*70)
-    
-    prcc_improvements = []
-    for deg_type in deg_types:
-        if (deg_type in ssim_metrics and ssim_metrics[deg_type]['prcc'] is not None and
-            deg_type in msssim_metrics and msssim_metrics[deg_type]['prcc'] is not None):
-            
-            ssim_prcc = ssim_metrics[deg_type]['prcc']
-            msssim_prcc = msssim_metrics[deg_type]['prcc']
-            improvement = msssim_prcc - ssim_prcc
-            winner = "MS-SSIM" if msssim_prcc > ssim_prcc else "SSIM" if ssim_prcc > msssim_prcc else "TIE"
-            
-            prcc_improvements.append(improvement)
-            
-            print(f"{deg_type.upper():<15} {ssim_prcc:<12.4f} {msssim_prcc:<12.4f} {improvement:+<15.4f} {winner:<10}")
-        else:
-            print(f"{deg_type.upper():<15} {'N/A':<12} {'N/A':<12} {'N/A':<15} {'N/A':<10}")
-    
-    # SROC Comparison
-    print("\n" + "-"*70)
-    print("SROC (Spearman Correlation) - Higher is Better")
-    print("-"*70)
-    print(f"{'Degradation':<15} {'SSIM':<12} {'MS-SSIM':<12} {'Improvement':<15} {'Winner':<10}")
-    print("-"*70)
-    
-    sroc_improvements = []
-    for deg_type in deg_types:
-        if (deg_type in ssim_metrics and ssim_metrics[deg_type]['sroc'] is not None and
-            deg_type in msssim_metrics and msssim_metrics[deg_type]['sroc'] is not None):
-            
-            ssim_sroc = ssim_metrics[deg_type]['sroc']
-            msssim_sroc = msssim_metrics[deg_type]['sroc']
-            improvement = msssim_sroc - ssim_sroc
-            winner = "MS-SSIM" if msssim_sroc > ssim_sroc else "SSIM" if ssim_sroc > msssim_sroc else "TIE"
-            
-            sroc_improvements.append(improvement)
-            
-            print(f"{deg_type.upper():<15} {ssim_sroc:<12.4f} {msssim_sroc:<12.4f} {improvement:+<15.4f} {winner:<10}")
-        else:
-            print(f"{deg_type.upper():<15} {'N/A':<12} {'N/A':<12} {'N/A':<15} {'N/A':<10}")
-    
-    # RMSE Comparison
-    print("\n" + "-"*70)
-    print("RMSE (Root Mean Square Error) - Lower is Better")
-    print("-"*70)
-    print(f"{'Degradation':<15} {'SSIM':<12} {'MS-SSIM':<12} {'Improvement':<15} {'Winner':<10}")
-    print("-"*70)
-    
-    rmse_improvements = []
-    for deg_type in deg_types:
-        if (deg_type in ssim_metrics and ssim_metrics[deg_type]['rmse'] is not None and
-            deg_type in msssim_metrics and msssim_metrics[deg_type]['rmse'] is not None):
-            
-            ssim_rmse = ssim_metrics[deg_type]['rmse']
-            msssim_rmse = msssim_metrics[deg_type]['rmse']
-            improvement = ssim_rmse - msssim_rmse  # Positive means MS-SSIM is better
-            winner = "MS-SSIM" if msssim_rmse < ssim_rmse else "SSIM" if ssim_rmse < msssim_rmse else "TIE"
-            
-            rmse_improvements.append(improvement)
-            
-            print(f"{deg_type.upper():<15} {ssim_rmse:<12.4f} {msssim_rmse:<12.4f} {improvement:+<15.4f} {winner:<10}")
-        else:
-            print(f"{deg_type.upper():<15} {'N/A':<12} {'N/A':<12} {'N/A':<15} {'N/A':<10}")
-    
-    # Overall Summary
-    print("\n" + "="*70)
-    print("OVERALL SUMMARY")
-    print("="*70)
-    
-    if prcc_improvements:
-        avg_prcc_improvement = np.mean(prcc_improvements)
-        print(f"\nAverage PRCC Improvement: {avg_prcc_improvement:+.4f}")
-        print(f"MS-SSIM wins on PRCC: {sum(1 for x in prcc_improvements if x > 0)}/{len(prcc_improvements)} cases")
-    
-    if sroc_improvements:
-        avg_sroc_improvement = np.mean(sroc_improvements)
-        print(f"\nAverage SROC Improvement: {avg_sroc_improvement:+.4f}")
-        print(f"MS-SSIM wins on SROC: {sum(1 for x in sroc_improvements if x > 0)}/{len(sroc_improvements)} cases")
-    
-    if rmse_improvements:
-        avg_rmse_improvement = np.mean(rmse_improvements)
-        print(f"\nAverage RMSE Improvement: {avg_rmse_improvement:+.4f} (positive = MS-SSIM better)")
-        print(f"MS-SSIM wins on RMSE: {sum(1 for x in rmse_improvements if x > 0)}/{len(rmse_improvements)} cases")
-    
-    # Final Verdict
-    print("\n" + "="*70)
-    if prcc_improvements and sroc_improvements and rmse_improvements:
-        msssim_wins = (sum(1 for x in prcc_improvements if x > 0) + 
-                       sum(1 for x in sroc_improvements if x > 0) + 
-                       sum(1 for x in rmse_improvements if x > 0))
-        total_comparisons = len(prcc_improvements) + len(sroc_improvements) + len(rmse_improvements)
+        # Title with gradient effect
+        title_label = ctk.CTkLabel(
+            header_frame,
+            text="🎨 Image Quality Assessment Tool",
+            font=ctk.CTkFont(size=28, weight="bold"),
+            text_color=("#1f538d", "#3a7ebf")
+        )
+        title_label.grid(row=0, column=0, columnspan=3, pady=(15, 5))
         
-        print(f"FINAL VERDICT:")
-        print(f"MS-SSIM outperforms SSIM in {msssim_wins}/{total_comparisons} comparisons")
-        print(f"Win rate: {(msssim_wins/total_comparisons)*100:.1f}%")
+        subtitle_label = ctk.CTkLabel(
+            header_frame,
+            text="Compare SSIM vs MS-SSIM Performance",
+            font=ctk.CTkFont(size=14),
+            text_color=("gray50", "gray70")
+        )
+        subtitle_label.grid(row=1, column=0, columnspan=3, pady=(0, 15))
         
-        if msssim_wins > total_comparisons / 2:
-            print("\n[+] MS-SSIM shows BETTER performance overall!")
-        elif msssim_wins < total_comparisons / 2:
-            print("\n[-] SSIM shows BETTER performance overall!")
-            print("\nPossible reasons MS-SSIM performed poorly:")
-            print("  - Images may be too small for effective multi-scale analysis")
-            print("  - Dataset characteristics may not benefit from multi-scale approach")
-            print("  - Single-scale features may be more relevant for these degradation types")
-        else:
-            print("\n[=] Both metrics perform EQUALLY!")
-    
-    print("="*70)
-
-
-def interactive_mode():
-    """
-    Interactive mode: Let user choose a reference image and a degraded image using file explorer.
-    """
-    print("\n" + "="*70)
-    print("INTERACTIVE MODE - SINGLE IMAGE COMPARISON")
-    print("="*70)
-    
-    ref_path = r"C:\Users\Hassiba Informatique\Desktop\Masters Degree\M2\QDM\dataset\refimgs"
-    dataset_path = r"C:\Users\Hassiba Informatique\Desktop\Masters Degree\M2\QDM\dataset"
-    
-    # Create a hidden root window for file dialogs
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes('-topmost', True)
-    
-    # Step 1: Choose reference image
-    print("\n" + "-"*70)
-    print("STEP 1: Choose a Reference Image")
-    print("-"*70)
-    print("\nOpening file explorer for reference images...")
-    print(f"Location: {ref_path}")
-    
-    ref_image_path = filedialog.askopenfilename(
-        initialdir=ref_path,
-        title="Select Reference Image",
-        filetypes=[
-            ("Image files", "*.bmp *.jpg *.jpeg *.png"),
-            ("BMP files", "*.bmp"),
-            ("All files", "*.*")
-        ]
-    )
-    
-    if not ref_image_path:
-        print("\n[X] No reference image selected. Exiting...")
-        root.destroy()
-        return
-    
-    selected_ref = os.path.basename(ref_image_path)
-    print(f"\n[✓] Selected reference image: {selected_ref}")
-    
-    # Load reference image
-    ref_img = cv2.imread(ref_image_path)
-    
-    if ref_img is None:
-        print(f"ERROR: Could not load reference image {ref_image_path}")
-        root.destroy()
-        return
-    
-    print(f"    Image loaded successfully! Dimensions: {ref_img.shape[1]}x{ref_img.shape[0]}")
-    
-    # Step 2: Get degraded images for this reference image
-    print("\n" + "-"*70)
-    print("STEP 2: Choose a Degraded Image")
-    print("-"*70)
-    
-    images_dict = file_paths()
-    
-    if selected_ref not in images_dict:
-        print(f"\n[!] Warning: No degraded versions found in database for {selected_ref}")
-        print("    You can still select any degraded image manually.")
+        # Dataset path section with icon
+        path_container = ctk.CTkFrame(header_frame, fg_color="transparent")
+        path_container.grid(row=2, column=0, columnspan=3, sticky="ew", padx=20, pady=(0, 15))
+        path_container.grid_columnconfigure(1, weight=1)
         
-        print("\nOpening file explorer for degraded images...")
-        print(f"Location: {dataset_path}")
+        path_icon = ctk.CTkLabel(
+            path_container,
+            text="📂",
+            font=ctk.CTkFont(size=20)
+        )
+        path_icon.grid(row=0, column=0, padx=(0, 10))
         
-        deg_image_path = filedialog.askopenfilename(
-            initialdir=dataset_path,
-            title="Select Degraded Image",
+        path_label = ctk.CTkLabel(
+            path_container,
+            text="Dataset Location:",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        path_label.grid(row=0, column=1, sticky="w")
+        
+        self.path_entry = ctk.CTkEntry(
+            path_container,
+            textvariable=self.dataset_path,
+            placeholder_text="Click browse to select your dataset folder...",
+            height=40,
+            font=ctk.CTkFont(size=13),
+            border_width=2
+        )
+        self.path_entry.grid(row=1, column=0, columnspan=2, padx=(0, 10), pady=(5, 0), sticky="ew")
+        
+        browse_btn = ctk.CTkButton(
+            path_container,
+            text="📁 Browse",
+            command=self.browse_dataset_path,
+            width=120,
+            height=40,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=("#3b8ed0", "#1f6aa5"),
+            hover_color=("#2d6da3", "#144870")
+        )
+        browse_btn.grid(row=1, column=2, pady=(5, 0))
+        
+        # Status indicator
+        self.path_status = ctk.CTkLabel(
+            path_container,
+            text="⚠️ No dataset selected",
+            font=ctk.CTkFont(size=12),
+            text_color=("orange", "orange")
+        )
+        self.path_status.grid(row=2, column=0, columnspan=3, pady=(5, 0))
+        
+    def browse_dataset_path(self):
+        """Open file dialog to select dataset folder"""
+        folder = filedialog.askdirectory(title="Select Dataset Folder")
+        if folder:
+            self.dataset_path.set(folder)
+            self.path_status.configure(
+                text="✅ Dataset path configured",
+                text_color=("green", "lightgreen")
+            )
+    
+    def create_tabview(self):
+        """Create tabview for different modes"""
+        self.tabview = ctk.CTkTabview(
+            self,
+            corner_radius=15,
+            border_width=2,
+            segmented_button_selected_color=("#3b8ed0", "#1f6aa5"),
+            segmented_button_selected_hover_color=("#2d6da3", "#144870")
+        )
+        self.tabview.grid(row=1, column=0, sticky="nsew", padx=20, pady=(10, 20))
+        
+        # Create tabs
+        self.tab_interactive = self.tabview.add("🔍 Interactive Mode")
+        self.tab_batch = self.tabview.add("📊 Batch Analysis")
+        
+        # Setup tabs
+        self.setup_interactive_tab()
+        self.setup_batch_tab()
+    
+    def setup_interactive_tab(self):
+        """Setup interactive mode tab"""
+        self.tab_interactive.grid_rowconfigure(1, weight=1)
+        self.tab_interactive.grid_columnconfigure(0, weight=1)
+        
+        # Image selection frame
+        selection_frame = ctk.CTkFrame(self.tab_interactive, fg_color="transparent")
+        selection_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 10))
+        selection_frame.grid_columnconfigure((0, 1), weight=1)
+        
+        # Reference image card
+        ref_card = ctk.CTkFrame(selection_frame, fg_color=("gray85", "gray20"), corner_radius=10)
+        ref_card.grid(row=0, column=0, padx=(0, 10), pady=5, sticky="ew")
+        
+        ref_label = ctk.CTkLabel(
+            ref_card,
+            text="📷 Reference Image",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        ref_label.pack(pady=(15, 5))
+        
+        self.ref_status_label = ctk.CTkLabel(
+            ref_card,
+            text="No image selected",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray50", "gray60")
+        )
+        self.ref_status_label.pack(pady=(0, 10))
+        
+        self.select_ref_btn = ctk.CTkButton(
+            ref_card,
+            text="📁 Select Reference",
+            command=self.select_reference_image,
+            height=45,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=("#2fa572", "#106a43"),
+            hover_color=("#207d54", "#0d4f31")
+        )
+        self.select_ref_btn.pack(padx=15, pady=(0, 15), fill="x")
+        
+        # Degraded image card
+        deg_card = ctk.CTkFrame(selection_frame, fg_color=("gray85", "gray20"), corner_radius=10)
+        deg_card.grid(row=0, column=1, padx=(10, 0), pady=5, sticky="ew")
+        
+        deg_label = ctk.CTkLabel(
+            deg_card,
+            text="🔧 Degraded Image",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        deg_label.pack(pady=(15, 5))
+        
+        self.deg_status_label = ctk.CTkLabel(
+            deg_card,
+            text="Select reference first",
+            font=ctk.CTkFont(size=11),
+            text_color=("gray50", "gray60")
+        )
+        self.deg_status_label.pack(pady=(0, 10))
+        
+        self.select_deg_btn = ctk.CTkButton(
+            deg_card,
+            text="📁 Select Degraded",
+            command=self.select_degraded_image,
+            height=45,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=("#d0861f", "#8f5d15"),
+            hover_color=("#a86b19", "#6b4710"),
+            state="disabled"
+        )
+        self.select_deg_btn.pack(padx=15, pady=(0, 15), fill="x")
+        
+        # Results display
+        results_label = ctk.CTkLabel(
+            self.tab_interactive,
+            text="📈 Quality Assessment Results",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            anchor="w"
+        )
+        results_label.grid(row=1, column=0, sticky="w", padx=25, pady=(10, 5))
+        
+        self.interactive_results = ctk.CTkTextbox(
+            self.tab_interactive,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            wrap="none",
+            corner_radius=10,
+            border_width=2
+        )
+        self.interactive_results.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 20))
+        self.tab_interactive.grid_rowconfigure(2, weight=1)
+        
+        welcome_text = (
+            "Welcome to Interactive Mode! 🎉\n\n"
+            "This mode allows you to compare individual images:\n"
+            "  • Select any reference image from your dataset\n"
+            "  • Choose a degraded version to compare\n"
+            "  • Get instant quality metrics (SSIM and MS-SSIM)\n"
+            "  • See detailed interpretation of results\n\n"
+            "Ready to start? Select your dataset path above and choose a reference image!"
+        )
+        self.interactive_results.insert("1.0", welcome_text)
+    
+    def setup_batch_tab(self):
+        """Setup batch mode tab"""
+        self.tab_batch.grid_rowconfigure(2, weight=1)
+        self.tab_batch.grid_columnconfigure(0, weight=1)
+        
+        # Control panel
+        control_frame = ctk.CTkFrame(self.tab_batch, fg_color=("gray85", "gray20"), corner_radius=10)
+        control_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 10))
+        
+        self.start_batch_btn = ctk.CTkButton(
+            control_frame,
+            text="▶️ Start Batch Analysis",
+            command=self.start_batch_analysis,
+            height=50,
+            font=ctk.CTkFont(size=16, weight="bold"),
+            fg_color=("#2fa572", "#106a43"),
+            hover_color=("#207d54", "#0d4f31")
+        )
+        self.start_batch_btn.pack(padx=20, pady=(20, 15))
+        
+        # Progress section
+        progress_container = ctk.CTkFrame(control_frame, fg_color="transparent")
+        progress_container.pack(fill="x", padx=20, pady=(0, 20))
+        
+        self.progress_label = ctk.CTkLabel(
+            progress_container,
+            text="⏳ Ready to start analysis",
+            font=ctk.CTkFont(size=13, weight="bold")
+        )
+        self.progress_label.pack(pady=(0, 8))
+        
+        self.progress_bar = ctk.CTkProgressBar(progress_container, height=20, corner_radius=10)
+        self.progress_bar.pack(fill="x", pady=(0, 8))
+        self.progress_bar.set(0)
+        
+        self.progress_percent = ctk.CTkLabel(
+            progress_container,
+            text="0%",
+            font=ctk.CTkFont(size=12),
+            text_color=("gray50", "gray60")
+        )
+        self.progress_percent.pack()
+        
+        # Results display
+        results_label = ctk.CTkLabel(
+            self.tab_batch,
+            text="📋 Analysis Results",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            anchor="w"
+        )
+        results_label.grid(row=1, column=0, sticky="w", padx=25, pady=(10, 5))
+        
+        self.batch_results = ctk.CTkTextbox(
+            self.tab_batch,
+            font=ctk.CTkFont(family="Consolas", size=11),
+            wrap="none",
+            corner_radius=10,
+            border_width=2
+        )
+        self.batch_results.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 20))
+        
+        welcome_text = (
+            "Welcome to Batch Analysis Mode! \n\n"
+            "This mode processes your entire dataset:\n"
+            "  • Calculates SSIM for all image pairs\n"
+            "  • Calculates MS-SSIM for all image pairs\n"
+            "  • Computes performance metrics (PRCC, SROC, RMSE)\n"
+            "  • Generates comprehensive comparison report\n\n"
+            "Ready to start? Set your dataset path and click 'Start Batch Analysis'!"
+        )
+        self.batch_results.insert("1.0", welcome_text)
+    
+    def select_reference_image(self):
+        """Select reference image"""
+        if not self.dataset_path.get():
+            messagebox.showwarning("⚠️ Warning", "Please set the dataset path first!")
+            return
+        
+        ref_path = os.path.join(self.dataset_path.get(), "refimgs")
+        if not os.path.exists(ref_path):
+            messagebox.showerror("❌ Error", f"Reference images folder not found:\n{ref_path}")
+            return
+        
+        filepath = filedialog.askopenfilename(
+            initialdir=ref_path,
+            title="Select Reference Image",
             filetypes=[
                 ("Image files", "*.bmp *.jpg *.jpeg *.png"),
-                ("BMP files", "*.bmp"),
                 ("All files", "*.*")
             ]
         )
         
-        if not deg_image_path:
-            print("\n[X] No degraded image selected. Exiting...")
-            root.destroy()
+        if filepath:
+            self.ref_image_path = filepath
+            self.ref_image_name = os.path.basename(filepath)
+            self.ref_image = cv2.imread(filepath)
+            
+            if self.ref_image is None:
+                messagebox.showerror("❌ Error", "Could not load the reference image!")
+                return
+            
+            # Update UI
+            self.select_deg_btn.configure(state="normal")
+            self.ref_status_label.configure(
+                text=f"✓ {self.ref_image_name}",
+                text_color=("green", "lightgreen")
+            )
+            self.deg_status_label.configure(
+                text="Ready to select degraded image",
+                text_color=("orange", "yellow")
+            )
+            
+            result_text = (
+                f"✅ Reference Image Selected!\n"
+                f"{'='*70}\n\n"
+                f"📄 Filename: {self.ref_image_name}\n"
+                f"📐 Dimensions: {self.ref_image.shape[1]} × {self.ref_image.shape[0]} pixels\n"
+                f"🎨 Channels: {self.ref_image.shape[2]}\n\n"
+                f"{'='*70}\n\n"
+                f"👉 Next step: Click 'Select Degraded' to choose a degraded version.\n"
+                f"   Only images related to this reference will be shown."
+            )
+            
+            self.interactive_results.delete("1.0", "end")
+            self.interactive_results.insert("1.0", result_text)
+    
+    def select_degraded_image(self):
+        """Select degraded image - showing only relevant ones"""
+        if not self.dataset_path.get() or self.ref_image is None:
             return
         
-        selected_deg_name = os.path.basename(deg_image_path)
-        # Try to detect degradation type from path
-        deg_type = "unknown"
-        for dtype in ['fastfading', 'gblur', 'jp2k', 'jpeg', 'wn']:
-            if dtype in deg_image_path.lower():
-                deg_type = dtype
-                break
+        dataset_path = self.dataset_path.get()
         
-        selected_deg = {
-            'name': selected_deg_name,
-            'type': deg_type,
-            'path': deg_image_path
-        }
-    else:
-        # Collect all degraded images for this reference
+        # Get the file paths structure
+        try:
+            images_dict = file_paths()
+        except Exception as e:
+            messagebox.showerror("❌ Error", f"Error loading file paths:\n{str(e)}")
+            return
+        
+        # Check if reference image has degraded versions
+        if self.ref_image_name not in images_dict:
+            messagebox.showwarning(
+                "⚠️ Warning",
+                f"No degraded versions found for:\n{self.ref_image_name}\n\n"
+                "You can still select any image manually."
+            )
+            
+            filepath = filedialog.askopenfilename(
+                initialdir=dataset_path,
+                title="Select Degraded Image",
+                filetypes=[
+                    ("Image files", "*.bmp *.jpg *.jpeg *.png"),
+                    ("All files", "*.*")
+                ]
+            )
+            
+            if filepath:
+                self.process_degraded_image(filepath)
+            return
+        
+        # Create filtered view with only relevant images
         degraded_images = []
-        available_types = []
-        valid_image_names = []
-        
-        for deg_type, deg_images_list in images_dict[selected_ref].items():
-            # Extract image names (every other element)
+        for deg_type, deg_images_list in images_dict[self.ref_image_name].items():
             deg_image_names = [deg_images_list[i] for i in range(0, len(deg_images_list), 2)]
-            available_types.append(deg_type)
-            valid_image_names.extend(deg_image_names)
             for deg_img_name in deg_image_names:
                 degraded_images.append({
                     'name': deg_img_name,
@@ -497,273 +416,570 @@ def interactive_mode():
                     'path': os.path.join(dataset_path, deg_type, deg_img_name)
                 })
         
-        print(f"\nFound {len(degraded_images)} degraded versions of {selected_ref}")
-        print(f"Available degradation types: {', '.join(available_types)}")
+        if not degraded_images:
+            messagebox.showwarning("⚠️ Warning", "No degraded images found!")
+            return
         
-        # Create a temporary directory with symbolic links to only the valid images
-        import tempfile
-        import shutil
-        
-        temp_dir = tempfile.mkdtemp(prefix="filtered_images_")
+        # Create temporary directory with filtered images
+        self.temp_dir = tempfile.mkdtemp(prefix="iqa_filtered_")
         
         try:
-            # Copy only the relevant degraded images to temp directory
+            # Copy only relevant images to temp directory
             for deg_info in degraded_images:
                 if os.path.exists(deg_info['path']):
-                    dest_folder = os.path.join(temp_dir, deg_info['type'])
+                    dest_folder = os.path.join(self.temp_dir, deg_info['type'])
                     os.makedirs(dest_folder, exist_ok=True)
                     dest_path = os.path.join(dest_folder, deg_info['name'])
                     shutil.copy2(deg_info['path'], dest_path)
             
-            print(f"\nShowing only the {len(degraded_images)} images related to {selected_ref}")
-            print("\nOpening file explorer with filtered images...")
-            print(f"Navigate through the degradation type folders to see the images.")
+            # Show info about filtering (optional - can be removed if too intrusive)
+            # deg_types = list(set([d['type'] for d in degraded_images]))
+            # messagebox.showinfo(
+            #     "📂 Filtered View",
+            #     f"Showing {len(degraded_images)} degraded versions of:\n"
+            #     f"{self.ref_image_name}\n\n"
+            #     f"Degradation types available:\n" + 
+            #     "\n".join([f"  • {dt.upper()}" for dt in sorted(deg_types)])
+            # )
             
-            deg_image_path = filedialog.askopenfilename(
-                initialdir=temp_dir,
-                title=f"Select Degraded Version of {selected_ref}",
+            # Open file dialog with filtered images
+            filepath = filedialog.askopenfilename(
+                initialdir=self.temp_dir,
+                title=f"Select Degraded Version of {self.ref_image_name}",
                 filetypes=[
                     ("Image files", "*.bmp *.jpg *.jpeg *.png"),
-                    ("BMP files", "*.bmp"),
                     ("All files", "*.*")
                 ]
             )
             
-            if not deg_image_path:
-                print("\n[X] No degraded image selected. Exiting...")
-                # Clean up temp directory
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                root.destroy()
-                return
-            
-            selected_deg_name = os.path.basename(deg_image_path)
-            
-            # Find the actual path and degradation type
-            deg_type = "unknown"
-            actual_path = deg_image_path
-            
-            for deg_info in degraded_images:
-                if deg_info['name'] == selected_deg_name:
-                    deg_type = deg_info['type']
-                    actual_path = deg_info['path']
-                    break
-            
-            # If not found in database, try to detect from path
-            if deg_type == "unknown":
-                for dtype in ['fastfading', 'gblur', 'jp2k', 'jpeg', 'wn']:
-                    if dtype in deg_image_path.lower():
-                        deg_type = dtype
-                        # Reconstruct actual path
-                        actual_path = os.path.join(dataset_path, deg_type, selected_deg_name)
+            if filepath:
+                # Find original path and type
+                selected_name = os.path.basename(filepath)
+                original_path = None
+                deg_type = "unknown"
+                
+                for deg_info in degraded_images:
+                    if deg_info['name'] == selected_name:
+                        original_path = deg_info['path']
+                        deg_type = deg_info['type']
                         break
-            
-            selected_deg = {
-                'name': selected_deg_name,
-                'type': deg_type,
-                'path': actual_path
-            }
-            
+                
+                if original_path:
+                    self.process_degraded_image(original_path, deg_type)
+        
+        except Exception as e:
+            messagebox.showerror("❌ Error", f"Error creating filtered view:\n{str(e)}")
+        
+        finally:
             # Clean up temp directory
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            if self.temp_dir and os.path.exists(self.temp_dir):
+                try:
+                    shutil.rmtree(self.temp_dir, ignore_errors=True)
+                except:
+                    pass
+                self.temp_dir = None
+    
+    def process_degraded_image(self, filepath, deg_type=None):
+        """Process the selected degraded image"""
+        self.deg_image_path = filepath
+        deg_name = os.path.basename(filepath)
+        self.deg_image = cv2.imread(filepath)
+        
+        if self.deg_image is None:
+            messagebox.showerror("❌ Error", "Could not load the degraded image!")
+            return
+        
+        # Detect degradation type if not provided
+        if deg_type is None:
+            for dtype in ['fastfading', 'gblur', 'jp2k', 'jpeg', 'wn']:
+                if dtype in filepath.lower():
+                    deg_type = dtype
+                    break
+            if deg_type is None:
+                deg_type = "unknown"
+        
+        self.deg_type = deg_type
+        
+        # Update UI
+        self.deg_status_label.configure(
+            text=f"✓ {deg_name}",
+            text_color=("green", "lightgreen")
+        )
+        
+        # Resize if needed
+        if self.deg_image.shape != self.ref_image.shape:
+            self.deg_image = cv2.resize(self.deg_image, (self.ref_image.shape[1], self.ref_image.shape[0]))
+        
+        # Calculate metrics
+        self.calculate_interactive_metrics(deg_name)
+    
+    def calculate_interactive_metrics(self, deg_name):
+        """Calculate and display metrics for interactive mode"""
+        self.interactive_results.delete("1.0", "end")
+        self.interactive_results.insert("1.0", "⚙️ Calculating quality metrics...\nPlease wait...")
+        self.update()
+        
+        # Calculate metrics for this specific image pair only
+        ssim_value = calc_ssim(self.ref_image, self.deg_image)
+        msssim_value = calc_msssim(self.ref_image, self.deg_image)
+        
+        # Format results with better styling
+        result_text = "="*80 + "\n"
+        result_text += "🎯 QUALITY ASSESSMENT RESULTS\n"
+        result_text += "="*80 + "\n\n"
+        
+        result_text += "📊 IMAGE INFORMATION\n"
+        result_text += "-"*80 + "\n"
+        result_text += f"  Reference:  {self.ref_image_name}\n"
+        result_text += f"  Degraded:   {deg_name}\n"
+        result_text += f"  Type:       {self.deg_type.upper()}\n"
+        result_text += f"  Size:       {self.ref_image.shape[1]} × {self.ref_image.shape[0]} pixels\n"
+        result_text += "\n"
+        
+        result_text += "="*80 + "\n"
+        result_text += "📈 QUALITY METRICS FOR THIS IMAGE PAIR\n"
+        result_text += "="*80 + "\n\n"
+        result_text += f"  {'Metric':<15} {'Value':<15} {'Quality Range':<30}\n"
+        result_text += f"  {'-'*14} {'-'*14} {'-'*29}\n"
+        result_text += f"  {'SSIM':<15} {ssim_value:<15.6f} [0.0 - 1.0, higher = better]\n"
+        result_text += f"  {'MS-SSIM':<15} {msssim_value:<15.6f} [0.0 - 1.0, higher = better]\n"
+        result_text += "\n"
+        
+        # Interpretation
+        result_text += "="*80 + "\n"
+        result_text += " QUALITY INTERPRETATION\n"
+        result_text += "="*80 + "\n\n"
+        
+        # def interpret_quality(score):
+        #     if score >= 0.95:
+        #         return ("Excellent", "⭐⭐⭐⭐⭐", "Almost imperceptible degradation")
+        #     elif score >= 0.90:
+        #         return ("Very Good", "⭐⭐⭐⭐", "Minor degradation")
+        #     elif score >= 0.80:
+        #         return ("Good", "⭐⭐⭐", "Noticeable but acceptable")
+        #     elif score >= 0.70:
+        #         return ("Fair", "⭐⭐", "Moderate degradation")
+        #     elif score >= 0.50:
+        #         return ("Poor", "⭐", "Significant degradation")
+        #     else:
+        #         return ("Very Poor", "☆", "Severe degradation")
+        
+        # ssim_quality, ssim_stars, ssim_desc = interpret_quality(ssim_value)
+        # msssim_quality, msssim_stars, msssim_desc = interpret_quality(msssim_value)
+        
+        result_text += f"SSIM Assessment:\n"
+        result_text += f"  Score:       {ssim_value:.4f}\n"
+        # result_text += f"  Rating:      {ssim_quality} {ssim_stars}\n"
+        # result_text += f"  Description: {ssim_desc}\n\n"
+        
+        result_text += f"MS-SSIM Assessment:\n"
+        result_text += f"  Score:       {msssim_value:.4f}\n"
+        # result_text += f"  Rating:      {msssim_quality} {msssim_stars}\n"
+        # result_text += f"  Description: {msssim_desc}\n\n"
+        
+        # Comparison
+        result_text += "-"*80 + "\n"
+        result_text += "METRIC COMPARISON\n"
+        result_text += "-"*80 + "\n"
+        
+        diff = abs(ssim_value - msssim_value)
+        if diff > 0.05:
+            if msssim_value > ssim_value:
+                result_text += f"📈 MS-SSIM rates this image {(msssim_value - ssim_value)*100:.2f}% higher\n"
+                result_text += "   → Multi-scale analysis captures quality aspects better\n"
+            else:
+                result_text += f"📉 SSIM rates this image {(ssim_value - msssim_value)*100:.2f}% higher\n"
+                result_text += "   → Single-scale features are more relevant here\n"
+        else:
+            result_text += "✓ Both metrics agree closely (difference < 5%)\n"
+            result_text += "  → Consistent quality assessment\n"
+        
+        result_text += "\n" + "="*80 + "\n"
+        result_text += "✅ Analysis Complete!\n"
+        result_text += "="*80 + "\n\n"
+        result_text += " TIP: Use 'Batch Analysis' mode to see PRCC, SROC, and RMSE performance\n"
+        result_text += "   metrics across the entire dataset."
+        
+        self.interactive_results.delete("1.0", "end")
+        self.interactive_results.insert("1.0", result_text)
+    
+    def start_batch_analysis(self):
+        """Start batch analysis in a separate thread"""
+        if not self.dataset_path.get():
+            messagebox.showwarning("⚠️ Warning", "Please set the dataset path first!")
+            return
+        
+        # Verify required folders exist
+        ref_path = os.path.join(self.dataset_path.get(), "refimgs")
+        dmos_path = os.path.join(self.dataset_path.get(), "dmos.mat")
+        
+        if not os.path.exists(ref_path):
+            messagebox.showerror("❌ Error", f"Reference images folder not found:\n{ref_path}")
+            return
+        
+        if not os.path.exists(dmos_path):
+            messagebox.showerror("❌ Error", f"DMOS file not found:\n{dmos_path}")
+            return
+        
+        self.start_batch_btn.configure(state="disabled", text="⏳ Analysis Running...")
+        self.batch_results.delete("1.0", "end")
+        self.batch_results.insert("1.0", " Starting batch analysis...\n\nThis may take several minutes.\nPlease wait...")
+        self.progress_bar.set(0)
+        self.progress_percent.configure(text="0%")
+        self.progress_label.configure(text="⏳ Initializing analysis...")
+        
+        # Run in separate thread
+        thread = threading.Thread(target=self.run_batch_analysis, daemon=True)
+        thread.start()
+    
+    def run_batch_analysis(self):
+        """Run the batch analysis"""
+        try:
+            # Update progress
+            self.update_progress(0.05, "📊 Calculating SSIM for all images...")
+            
+            ssim_results = self.calculate_all_metrics_silent(calc_ssim, "SSIM")
+            
+            self.update_progress(0.35, "🔍 Calculating MS-SSIM for all images...")
+            
+            msssim_results = self.calculate_all_metrics_silent(calc_msssim, "MS-SSIM")
+            
+            self.update_progress(0.65, "📋 Extracting DMOS values...")
+            
+            dmos_arrays = self.extract_dmos_arrays_silent(ssim_results)
+            
+            self.update_progress(0.75, "📈 Calculating SSIM performance metrics...")
+            
+            ssim_metrics = self.calculate_performance_metrics_silent(ssim_results, dmos_arrays, "SSIM")
+            
+            self.update_progress(0.85, "📈 Calculating MS-SSIM performance metrics...")
+            
+            msssim_metrics = self.calculate_performance_metrics_silent(msssim_results, dmos_arrays, "MS-SSIM")
+            
+            self.update_progress(0.95, "📝 Generating comprehensive report...")
+            
+            report = self.generate_batch_report(ssim_results, msssim_results, ssim_metrics, msssim_metrics)
+            
+            self.update_progress(1.0, "✅ Analysis complete!")
+            
+            # Display results
+            self.after(0, lambda: self.batch_results.delete("1.0", "end"))
+            self.after(0, lambda: self.batch_results.insert("1.0", report))
+            self.after(0, lambda: self.start_batch_btn.configure(state="normal", text="▶️ Start Batch Analysis"))
+            
+            # Show completion message
+            self.after(0, lambda: messagebox.showinfo(
+                "✅ Success",
+                "Batch analysis completed successfully!\n\nReview the results in the text area below."
+            ))
             
         except Exception as e:
-            print(f"\n[!] Error creating filtered view: {e}")
-            print("    Falling back to normal file selection...")
-            # Clean up temp directory
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            error_msg = f"Error during batch analysis:\n{str(e)}"
+            self.after(0, lambda: messagebox.showerror("❌ Error", error_msg))
+            self.after(0, lambda: self.start_batch_btn.configure(state="normal", text="▶️ Start Batch Analysis"))
+            self.after(0, lambda: self.progress_label.configure(text="❌ Analysis failed!"))
+    
+    def update_progress(self, value, text):
+        """Update progress bar and label"""
+        self.after(0, lambda: self.progress_bar.set(value))
+        self.after(0, lambda: self.progress_label.configure(text=text))
+        self.after(0, lambda: self.progress_percent.configure(text=f"{int(value*100)}%"))
+    
+    def calculate_all_metrics_silent(self, metric_function, metric_name):
+        """Calculate metrics without printing individual values"""
+        images_dict = file_paths()
+        
+        ref_path = os.path.join(self.dataset_path.get(), "refimgs")
+        dataset_path = self.dataset_path.get()
+        
+        metric_arrays = {
+            'fastfading': [],
+            'gblur': [],
+            'jp2k': [],
+            'jpeg': [],
+            'wn': []
+        }
+        
+        for ref_image_name, degradations in images_dict.items():
+            ref_image_path = os.path.join(ref_path, ref_image_name)
+            ref_img = cv2.imread(ref_image_path)
             
-            deg_image_path = filedialog.askopenfilename(
-                initialdir=dataset_path,
-                title=f"Select Degraded Version of {selected_ref}",
-                filetypes=[
-                    ("Image files", "*.bmp *.jpg *.jpeg *.png"),
-                    ("BMP files", "*.bmp"),
-                    ("All files", "*.*")
-                ]
-            )
+            if ref_img is None:
+                continue
             
-            if not deg_image_path:
-                print("\n[X] No degraded image selected. Exiting...")
-                root.destroy()
-                return
-            
-            selected_deg_name = os.path.basename(deg_image_path)
-            
-            # Find the degradation type
-            deg_type = "unknown"
-            for deg_info in degraded_images:
-                if deg_info['name'] == selected_deg_name:
-                    deg_type = deg_info['type']
+            for deg_type, deg_images_list in degradations.items():
+                deg_image_names = [deg_images_list[i] for i in range(0, len(deg_images_list), 2)]
+                
+                for deg_img_name in deg_image_names:
+                    deg_image_path = os.path.join(dataset_path, deg_type, deg_img_name)
+                    deg_img = cv2.imread(deg_image_path)
+                    
+                    if deg_img is None:
+                        continue
+                    
+                    if deg_img.shape != ref_img.shape:
+                        deg_img = cv2.resize(deg_img, (ref_img.shape[1], ref_img.shape[0]))
+                    
+                    metric_value = metric_function(ref_img, deg_img)
+                    metric_arrays[deg_type].append(metric_value)
+        
+        global_metric_array = []
+        for deg_type in ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading']:
+            global_metric_array.extend(metric_arrays[deg_type])
+        
+        metric_arrays['global'] = global_metric_array
+        return metric_arrays
+    
+    def extract_dmos_arrays_silent(self, metric_results):
+        """Extract DMOS arrays without printing"""
+        mat_file_path = os.path.join(self.dataset_path.get(), "dmos.mat")
+        mat_data = scipy.io.loadmat(mat_file_path)
+        
+        dmos_global = None
+        for key in mat_data.keys():
+            if not key.startswith('__'):
+                if isinstance(mat_data[key], np.ndarray):
+                    dmos_global = mat_data[key][0]
                     break
+        
+        if dmos_global is None:
+            raise ValueError("Could not find DMOS data in mat file")
+        
+        dmos_arrays = {
+            'jp2k': [],
+            'jpeg': [],
+            'wn': [],
+            'gblur': [],
+            'fastfading': [],
+            'global': dmos_global.tolist()
+        }
+        
+        counts = {
+            'jp2k': len(metric_results['jp2k']),
+            'jpeg': len(metric_results['jpeg']),
+            'wn': len(metric_results['wn']),
+            'gblur': len(metric_results['gblur']),
+            'fastfading': len(metric_results['fastfading'])
+        }
+        
+        start_idx = 0
+        for deg_type in ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading']:
+            count = counts[deg_type]
+            dmos_arrays[deg_type] = dmos_global[start_idx:start_idx + count].tolist()
+            start_idx += count
+        
+        return dmos_arrays
+    
+    def calculate_performance_metrics_silent(self, metric_results, dmos_results, metric_name):
+        """Calculate performance metrics without printing"""
+        metrics = {}
+        deg_types = ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading', 'global']
+        
+        for deg_type in deg_types:
+            metric_array = metric_results[deg_type]
+            dmos_array = dmos_results[deg_type]
             
-            # If not found in database, try to detect from path
-            if deg_type == "unknown":
-                for dtype in ['fastfading', 'gblur', 'jp2k', 'jpeg', 'wn']:
-                    if dtype in deg_image_path.lower():
-                        deg_type = dtype
-                        break
+            if len(metric_array) != len(dmos_array) or len(metric_array) < 2:
+                metrics[deg_type] = {'prcc': None, 'sroc': None, 'rmse': None}
+                continue
             
-            selected_deg = {
-                'name': selected_deg_name,
-                'type': deg_type,
-                'path': deg_image_path
-            }
+            try:
+                prcc = calculate_prcc(metric_array, dmos_array)
+                sroc = calculate_sroc(metric_array, dmos_array)
+                rmse = calculate_rmse(metric_array, dmos_array)
+                
+                metrics[deg_type] = {
+                    'prcc': prcc,
+                    'sroc': sroc,
+                    'rmse': rmse
+                }
+            except Exception as e:
+                metrics[deg_type] = {'prcc': None, 'sroc': None, 'rmse': None}
+        
+        return metrics
     
-    print(f"\n[✓] Selected degraded image: {selected_deg['name']} ({selected_deg['type']})")
+    def generate_batch_report(self, ssim_results, msssim_results, ssim_metrics, msssim_metrics):
+        """Generate comprehensive batch analysis report"""
+        report = "="*80 + "\n"
+        report += "🎉 BATCH ANALYSIS COMPLETE\n"
+        report += "="*80 + "\n\n"
+        
+        # Dataset info
+        report += "📁 DATASET INFORMATION\n"
+        report += "-"*80 + "\n"
+        report += f"Location: {self.dataset_path.get()}\n"
+        report += f"Total images analyzed: {len(ssim_results['global'])}\n"
+        report += "\n"
+        
+        # Summary statistics
+        report += "="*80 + "\n"
+        report += "📊 SUMMARY STATISTICS\n"
+        report += "="*80 + "\n\n"
+        
+        deg_types = ['jp2k', 'jpeg', 'wn', 'gblur', 'fastfading']
+        
+        for metric_name, results in [("SSIM", ssim_results), ("MS-SSIM", msssim_results)]:
+            report += f"{'─'*80}\n"
+            report += f"{metric_name} SCORES BY DEGRADATION TYPE\n"
+            report += f"{'─'*80}\n\n"
+            
+            report += f"{'Type':<12} {'Count':<8} {'Min':<10} {'Max':<10} {'Mean':<10} {'Std Dev':<10}\n"
+            report += f"{'-'*12} {'-'*7} {'-'*9} {'-'*9} {'-'*9} {'-'*9}\n"
+            
+            for deg_type in deg_types:
+                arr = results[deg_type]
+                if len(arr) > 0:
+                    report += f"{deg_type.upper():<12} {len(arr):<8} {np.min(arr):<10.4f} {np.max(arr):<10.4f} {np.mean(arr):<10.4f} {np.std(arr):<10.4f}\n"
+            
+            arr = results['global']
+            report += f"{'-'*72}\n"
+            report += f"{'GLOBAL':<12} {len(arr):<8} {np.min(arr):<10.4f} {np.max(arr):<10.4f} {np.mean(arr):<10.4f} {np.std(arr):<10.4f}\n"
+            report += "\n"
+        
+        # Performance metrics tables
+        report += "\n" + "="*80 + "\n"
+        report += "📈 PERFORMANCE METRICS\n"
+        report += "="*80 + "\n\n"
+        
+        for metric_name, metrics in [("SSIM", ssim_metrics), ("MS-SSIM", msssim_metrics)]:
+            report += f"{'─'*80}\n"
+            report += f"{metric_name} PERFORMANCE\n"
+            report += f"{'─'*80}\n\n"
+            report += f"{'Degradation':<15} {'PRCC':<15} {'SROC':<15} {'RMSE':<15}\n"
+            report += f"{'-'*15} {'-'*14} {'-'*14} {'-'*14}\n"
+            
+            for deg_type in deg_types + ['global']:
+                if deg_type in metrics and metrics[deg_type]['prcc'] is not None:
+                    prcc = metrics[deg_type]['prcc']
+                    sroc = metrics[deg_type]['sroc']
+                    rmse = metrics[deg_type]['rmse']
+                    report += f"{deg_type.upper():<15} {prcc:<15.4f} {sroc:<15.4f} {rmse:<15.4f}\n"
+                else:
+                    report += f"{deg_type.upper():<15} {'N/A':<15} {'N/A':<15} {'N/A':<15}\n"
+            report += "\n"
+        
+        # Comparison
+        report += "\n" + "="*80 + "\n"
+        report += "⚖️  COMPARISON: SSIM vs MS-SSIM\n"
+        report += "="*80 + "\n\n"
+        
+        # PRCC Comparison
+        report += "PRCC (Pearson Correlation) - Higher is Better\n"
+        report += "-"*80 + "\n"
+        report += f"{'Degradation':<15} {'SSIM':<15} {'MS-SSIM':<15} {'Δ':<15} {'Winner':<15}\n"
+        report += "-"*80 + "\n"
+        
+        prcc_improvements = []
+        for deg_type in deg_types + ['global']:
+            if (deg_type in ssim_metrics and ssim_metrics[deg_type]['prcc'] is not None and
+                deg_type in msssim_metrics and msssim_metrics[deg_type]['prcc'] is not None):
+                
+                ssim_prcc = ssim_metrics[deg_type]['prcc']
+                msssim_prcc = msssim_metrics[deg_type]['prcc']
+                improvement = msssim_prcc - ssim_prcc
+                
+                if abs(improvement) < 0.001:
+                    winner = "TIE ≈"
+                else:
+                    winner = "MS-SSIM ↑" if msssim_prcc > ssim_prcc else "SSIM ↑"
+                
+                prcc_improvements.append(improvement)
+                report += f"{deg_type.upper():<15} {ssim_prcc:<15.4f} {msssim_prcc:<15.4f} {improvement:+<15.4f} {winner:<15}\n"
+        
+        # SROC Comparison
+        report += "\n" + "SROC (Spearman Correlation) - Higher is Better\n"
+        report += "-"*80 + "\n"
+        report += f"{'Degradation':<15} {'SSIM':<15} {'MS-SSIM':<15} {'Δ':<15} {'Winner':<15}\n"
+        report += "-"*80 + "\n"
+        
+        sroc_improvements = []
+        for deg_type in deg_types + ['global']:
+            if (deg_type in ssim_metrics and ssim_metrics[deg_type]['sroc'] is not None and
+                deg_type in msssim_metrics and msssim_metrics[deg_type]['sroc'] is not None):
+                
+                ssim_sroc = ssim_metrics[deg_type]['sroc']
+                msssim_sroc = msssim_metrics[deg_type]['sroc']
+                improvement = msssim_sroc - ssim_sroc
+                
+                if abs(improvement) < 0.001:
+                    winner = "TIE ≈"
+                else:
+                    winner = "MS-SSIM ↑" if msssim_sroc > ssim_sroc else "SSIM ↑"
+                
+                sroc_improvements.append(improvement)
+                report += f"{deg_type.upper():<15} {ssim_sroc:<15.4f} {msssim_sroc:<15.4f} {improvement:+<15.4f} {winner:<15}\n"
+        
+        # RMSE Comparison
+        report += "\n" + "RMSE (Root Mean Square Error) - Lower is Better\n"
+        report += "-"*80 + "\n"
+        report += f"{'Degradation':<15} {'SSIM':<15} {'MS-SSIM':<15} {'Δ':<15} {'Winner':<15}\n"
+        report += "-"*80 + "\n"
+        
+        rmse_improvements = []
+        for deg_type in deg_types + ['global']:
+            if (deg_type in ssim_metrics and ssim_metrics[deg_type]['rmse'] is not None and
+                deg_type in msssim_metrics and msssim_metrics[deg_type]['rmse'] is not None):
+                
+                ssim_rmse = ssim_metrics[deg_type]['rmse']
+                msssim_rmse = msssim_metrics[deg_type]['rmse']
+                improvement = ssim_rmse - msssim_rmse
+                
+                if abs(improvement) < 0.001:
+                    winner = "TIE ≈"
+                else:
+                    winner = "MS-SSIM ↓" if msssim_rmse < ssim_rmse else "SSIM ↓"
+                
+                rmse_improvements.append(improvement)
+                report += f"{deg_type.upper():<15} {ssim_rmse:<15.4f} {msssim_rmse:<15.4f} {improvement:+<15.4f} {winner:<15}\n"
+        
+        # Final verdict
+        report += "\n\n" + "="*80 + "\n"
+        report += "🏆 FINAL VERDICT\n"
+        report += "="*80 + "\n\n"
+        
+        if prcc_improvements and sroc_improvements and rmse_improvements:
+            msssim_wins = (sum(1 for x in prcc_improvements if x > 0) + 
+                           sum(1 for x in sroc_improvements if x > 0) + 
+                           sum(1 for x in rmse_improvements if x > 0))
+            total_comparisons = len(prcc_improvements) + len(sroc_improvements) + len(rmse_improvements)
+            
+            avg_prcc = np.mean(prcc_improvements)
+            avg_sroc = np.mean(sroc_improvements)
+            avg_rmse = np.mean(rmse_improvements)
+            
+            report += f"Overall Statistics:\n"
+            report += f"  • MS-SSIM wins: {msssim_wins}/{total_comparisons} comparisons ({(msssim_wins/total_comparisons)*100:.1f}%)\n"
+            report += f"  • Average PRCC improvement: {avg_prcc:+.4f}\n"
+            report += f"  • Average SROC improvement: {avg_sroc:+.4f}\n"
+            report += f"  • Average RMSE improvement: {avg_rmse:+.4f} (positive = MS-SSIM better)\n\n"
+            
+            if msssim_wins > total_comparisons * 0.6:
+                report += "🎯 RESULT: MS-SSIM shows SIGNIFICANTLY BETTER performance!\n"
+                report += "   → Multi-scale analysis provides superior quality assessment\n"
+            elif msssim_wins > total_comparisons * 0.4:
+                report += "⚖️  RESULT: Both metrics perform COMPARABLY\n"
+                report += "   → Choice depends on specific use case requirements\n"
+            else:
+                report += "📊 RESULT: SSIM shows BETTER performance overall\n"
+                report += "   → Single-scale features are more relevant for this dataset\n"
+        
+        report += "\n" + "="*80 + "\n"
+        report += "✅ Analysis completed successfully!\n"
+        report += "="*80
+        
+        return report
     
-    # Load degraded image
-    deg_img = cv2.imread(selected_deg['path'])
-    
-    if deg_img is None:
-        print(f"ERROR: Could not load degraded image {selected_deg['path']}")
-        root.destroy()
-        return
-    
-    print(f"    Image loaded successfully! Dimensions: {deg_img.shape[1]}x{deg_img.shape[0]}")
-    
-    # Resize if needed
-    if deg_img.shape != ref_img.shape:
-        print(f"    Resizing degraded image to match reference dimensions...")
-        deg_img = cv2.resize(deg_img, (ref_img.shape[1], ref_img.shape[0]))
-    
-    # Destroy the root window
-    root.destroy()
-    
-    # Step 3: Calculate metrics
-    print("\n" + "-"*70)
-    print("STEP 3: Calculating Quality Metrics")
-    print("-"*70)
-    
-    print("\nCalculating SSIM...")
-    ssim_value = calc_ssim(ref_img, deg_img)
-    
-    print("Calculating MS-SSIM...")
-    msssim_value = calc_msssim(ref_img, deg_img)
-    
-    # Display results
-    print("\n" + "="*70)
-    print("RESULTS")
-    print("="*70)
-    print(f"\nReference Image:  {selected_ref}")
-    print(f"Degraded Image:   {selected_deg['name']}")
-    print(f"Degradation Type: {selected_deg['type'].upper()}")
-    print(f"\n{'Metric':<20} {'Value':<15} {'Range':<20}")
-    print("-"*70)
-    print(f"{'SSIM':<20} {ssim_value:<15.6f} {'[0.0 - 1.0, higher better]':<20}")
-    print(f"{'MS-SSIM':<20} {msssim_value:<15.6f} {'[0.0 - 1.0, higher better]':<20}")
-    print("-"*70)
-    
-    # Interpretation
-    print("\n" + "="*70)
-    print("INTERPRETATION")
-    print("="*70)
-    
-    def interpret_quality(score):
-        if score >= 0.95:
-            return "Excellent - Almost imperceptible degradation"
-        elif score >= 0.90:
-            return "Very Good - Minor degradation"
-        elif score >= 0.80:
-            return "Good - Noticeable but acceptable degradation"
-        elif score >= 0.70:
-            return "Fair - Moderate degradation"
-        elif score >= 0.50:
-            return "Poor - Significant degradation"
-        else:
-            return "Very Poor - Severe degradation"
-    
-    print(f"\nSSIM Score ({ssim_value:.4f}):")
-    print(f"  {interpret_quality(ssim_value)}")
-    
-    print(f"\nMS-SSIM Score ({msssim_value:.4f}):")
-    print(f"  {interpret_quality(msssim_value)}")
-    
-    if abs(ssim_value - msssim_value) > 0.05:
-        if msssim_value > ssim_value:
-            print(f"\n[!] MS-SSIM rates this image {(msssim_value - ssim_value)*100:.2f}% higher than SSIM")
-            print("    Multi-scale analysis may be capturing quality aspects better.")
-        else:
-            print(f"\n[!] SSIM rates this image {(ssim_value - msssim_value)*100:.2f}% higher than MS-SSIM")
-            print("    Single-scale features may be more relevant for this degradation.")
-    else:
-        print("\n[=] Both metrics agree closely on the quality assessment.")
-    
-    print("\n" + "="*70)
-
-
-def batch_mode():
-    """
-    Batch mode: Calculate metrics for all images and compare SSIM vs MS-SSIM.
-    """
-    print("\n" + "="*70)
-    print("BATCH MODE - COMPLETE DATASET ANALYSIS")
-    print("="*70)
-    
-    # Step 1: Calculate SSIM for all images
-    print("\n\n" + "#"*70)
-    print("# PART 1: CALCULATING BASIC SSIM")
-    print("#"*70)
-    ssim_results = calculate_all_metrics(calc_ssim, "SSIM")
-    
-    # Step 2: Calculate MS-SSIM for all images
-    print("\n\n" + "#"*70)
-    print("# PART 2: CALCULATING MS-SSIM")
-    print("#"*70)
-    msssim_results = calculate_all_metrics(calc_msssim, "MS-SSIM")
-    
-    # Step 3: Extract DMOS arrays (only need to do this once)
-    print("\n\n" + "#"*70)
-    print("# PART 3: EXTRACTING DMOS VALUES")
-    print("#"*70)
-    dmos_arrays = extract_dmos_arrays(ssim_results)
-    
-    # Step 4: Calculate performance metrics for SSIM
-    print("\n\n" + "#"*70)
-    print("# PART 4: CALCULATING SSIM PERFORMANCE METRICS")
-    print("#"*70)
-    ssim_metrics = calculate_performance_metrics(ssim_results, dmos_arrays, "SSIM")
-    print_metrics_table(ssim_metrics, "SSIM")
-    
-    # Step 5: Calculate performance metrics for MS-SSIM
-    print("\n\n" + "#"*70)
-    print("# PART 5: CALCULATING MS-SSIM PERFORMANCE METRICS")
-    print("#"*70)
-    msssim_metrics = calculate_performance_metrics(msssim_results, dmos_arrays, "MS-SSIM")
-    print_metrics_table(msssim_metrics, "MS-SSIM")
-    
-    # Step 6: Compare both metrics
-    print("\n\n" + "#"*70)
-    print("# PART 6: COMPARISON RESULTS")
-    print("#"*70)
-    compare_metrics(ssim_metrics, msssim_metrics)
-    
-    print("\n" + "="*70)
-    print("ALL CALCULATIONS AND COMPARISON COMPLETED!")
-    print("="*70)
+    def on_closing(self):
+        """Clean up before closing"""
+        if self.temp_dir and os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
+            except:
+                pass
+        self.destroy()
 
 
 if __name__ == "__main__":
-    print("="*70)
-    print("IMAGE QUALITY ASSESSMENT TOOL")
-    print("SSIM vs MS-SSIM Analysis")
-    print("="*70)
-    
-    print("\nSelect Mode:")
-    print("  1. Interactive Mode - Compare single images")
-    print("  2. Batch Mode - Analyze complete dataset")
-    
-    while True:
-        try:
-            mode_choice = input("\nEnter your choice (1 or 2): ").strip()
-            if mode_choice in ['1', '2']:
-                break
-            else:
-                print("Please enter 1 or 2")
-        except KeyboardInterrupt:
-            print("\n\nExiting...")
-            exit(0)
-    
-    if mode_choice == '1':
-        interactive_mode()
-    else:
-        batch_mode()
+    app = ImageQualityAssessmentApp()
+    app.protocol("WM_DELETE_WINDOW", app.on_closing)
+    app.mainloop()
