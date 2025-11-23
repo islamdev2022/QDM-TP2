@@ -137,11 +137,11 @@ class ImageQualityAssessmentApp(ctk.CTk):
         
         # Create tabs
         self.tab_interactive = self.tabview.add("🔍 Interactive Mode")
-        self.tab_batch = self.tabview.add("📊 Batch Analysis")
+        self.tab_global = self.tabview.add("📊 Global Analysis")
         
         # Setup tabs
         self.setup_interactive_tab()
-        self.setup_batch_tab()
+        self.setup_global_tab()
     
     def setup_interactive_tab(self):
         """Setup interactive mode tab"""
@@ -244,25 +244,25 @@ class ImageQualityAssessmentApp(ctk.CTk):
         )
         self.interactive_results.insert("1.0", welcome_text)
     
-    def setup_batch_tab(self):
-        """Setup batch mode tab"""
-        self.tab_batch.grid_rowconfigure(2, weight=1)
-        self.tab_batch.grid_columnconfigure(0, weight=1)
+    def setup_global_tab(self):
+        """Setup global mode tab"""
+        self.tab_global.grid_rowconfigure(2, weight=1)
+        self.tab_global.grid_columnconfigure(0, weight=1)
         
         # Control panel
-        control_frame = ctk.CTkFrame(self.tab_batch, fg_color=("gray85", "gray20"), corner_radius=10)
+        control_frame = ctk.CTkFrame(self.tab_global, fg_color=("gray85", "gray20"), corner_radius=10)
         control_frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 10))
         
-        self.start_batch_btn = ctk.CTkButton(
+        self.start_global_btn = ctk.CTkButton(
             control_frame,
-            text="▶️ Start Batch Analysis",
-            command=self.start_batch_analysis,
+            text="▶️ Start global Analysis",
+            command=self.start_global_analysis,
             height=50,
             font=ctk.CTkFont(size=16, weight="bold"),
             fg_color=("#2fa572", "#106a43"),
             hover_color=("#207d54", "#0d4f31")
         )
-        self.start_batch_btn.pack(padx=20, pady=(20, 15))
+        self.start_global_btn.pack(padx=20, pady=(20, 15))
         
         # Progress section
         progress_container = ctk.CTkFrame(control_frame, fg_color="transparent")
@@ -289,32 +289,32 @@ class ImageQualityAssessmentApp(ctk.CTk):
         
         # Results display
         results_label = ctk.CTkLabel(
-            self.tab_batch,
+            self.tab_global,
             text="📋 Analysis Results",
             font=ctk.CTkFont(size=16, weight="bold"),
             anchor="w"
         )
         results_label.grid(row=1, column=0, sticky="w", padx=25, pady=(10, 5))
         
-        self.batch_results = ctk.CTkTextbox(
-            self.tab_batch,
+        self.global_results = ctk.CTkTextbox(
+            self.tab_global,
             font=ctk.CTkFont(family="Consolas", size=11),
             wrap="none",
             corner_radius=10,
             border_width=2
         )
-        self.batch_results.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 20))
+        self.global_results.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 20))
         
         welcome_text = (
-            "Welcome to Batch Analysis Mode! \n\n"
+            "Welcome to global Analysis Mode! \n\n"
             "This mode processes your entire dataset:\n"
             "  • Calculates SSIM for all image pairs\n"
             "  • Calculates MS-SSIM for all image pairs\n"
             "  • Computes performance metrics (PRCC, SROC, RMSE)\n"
             "  • Generates comprehensive comparison report\n\n"
-            "Ready to start? Set your dataset path and click 'Start Batch Analysis'!"
+            "Ready to start? Set your dataset path and click 'Start global Analysis'!"
         )
-        self.batch_results.insert("1.0", welcome_text)
+        self.global_results.insert("1.0", welcome_text)
     
     def select_reference_image(self):
         """Select reference image"""
@@ -597,14 +597,14 @@ class ImageQualityAssessmentApp(ctk.CTk):
         result_text += "\n" + "="*80 + "\n"
         result_text += "✅ Analysis Complete!\n"
         result_text += "="*80 + "\n\n"
-        result_text += " TIP: Use 'Batch Analysis' mode to see PRCC, SROC, and RMSE performance\n"
+        result_text += " TIP: Use 'global Analysis' mode to see PRCC, SROC, and RMSE performance\n"
         result_text += "   metrics across the entire dataset."
         
         self.interactive_results.delete("1.0", "end")
         self.interactive_results.insert("1.0", result_text)
     
-    def start_batch_analysis(self):
-        """Start batch analysis in a separate thread"""
+    def start_global_analysis(self):
+        """Start global analysis in a separate thread"""
         if not self.dataset_path.get():
             messagebox.showwarning("⚠️ Warning", "Please set the dataset path first!")
             return
@@ -621,19 +621,19 @@ class ImageQualityAssessmentApp(ctk.CTk):
             messagebox.showerror("❌ Error", f"DMOS file not found:\n{dmos_path}")
             return
         
-        self.start_batch_btn.configure(state="disabled", text="⏳ Analysis Running...")
-        self.batch_results.delete("1.0", "end")
-        self.batch_results.insert("1.0", " Starting batch analysis...\n\nThis may take several minutes.\nPlease wait...")
+        self.start_global_btn.configure(state="disabled", text="⏳ Analysis Running...")
+        self.global_results.delete("1.0", "end")
+        self.global_results.insert("1.0", " Starting global analysis...\n\nThis may take several minutes.\nPlease wait...")
         self.progress_bar.set(0)
         self.progress_percent.configure(text="0%")
         self.progress_label.configure(text="⏳ Initializing analysis...")
         
         # Run in separate thread
-        thread = threading.Thread(target=self.run_batch_analysis, daemon=True)
+        thread = threading.Thread(target=self.run_global_analysis, daemon=True)
         thread.start()
     
-    def run_batch_analysis(self):
-        """Run the batch analysis"""
+    def run_global_analysis(self):
+        """Run the global analysis"""
         try:
             # Update progress
             self.update_progress(0.05, "📊 Calculating SSIM for all images...")
@@ -658,25 +658,25 @@ class ImageQualityAssessmentApp(ctk.CTk):
             
             self.update_progress(0.95, "📝 Generating comprehensive report...")
             
-            report = self.generate_batch_report(ssim_results, msssim_results, ssim_metrics, msssim_metrics)
+            report = self.generate_global_report(ssim_results, msssim_results, ssim_metrics, msssim_metrics)
             
             self.update_progress(1.0, "✅ Analysis complete!")
             
             # Display results
-            self.after(0, lambda: self.batch_results.delete("1.0", "end"))
-            self.after(0, lambda: self.batch_results.insert("1.0", report))
-            self.after(0, lambda: self.start_batch_btn.configure(state="normal", text="▶️ Start Batch Analysis"))
+            self.after(0, lambda: self.global_results.delete("1.0", "end"))
+            self.after(0, lambda: self.global_results.insert("1.0", report))
+            self.after(0, lambda: self.start_global_btn.configure(state="normal", text="▶️ Start global Analysis"))
             
             # Show completion message
             self.after(0, lambda: messagebox.showinfo(
                 "✅ Success",
-                "Batch analysis completed successfully!\n\nReview the results in the text area below."
+                "global analysis completed successfully!\n\nReview the results in the text area below."
             ))
             
         except Exception as e:
-            error_msg = f"Error during batch analysis:\n{str(e)}"
+            error_msg = f"Error during global analysis:\n{str(e)}"
             self.after(0, lambda: messagebox.showerror("❌ Error", error_msg))
-            self.after(0, lambda: self.start_batch_btn.configure(state="normal", text="▶️ Start Batch Analysis"))
+            self.after(0, lambda: self.start_global_btn.configure(state="normal", text="▶️ Start global Analysis"))
             self.after(0, lambda: self.progress_label.configure(text="❌ Analysis failed!"))
     
     def update_progress(self, value, text):
@@ -798,10 +798,10 @@ class ImageQualityAssessmentApp(ctk.CTk):
         
         return metrics
     
-    def generate_batch_report(self, ssim_results, msssim_results, ssim_metrics, msssim_metrics):
-        """Generate comprehensive batch analysis report"""
+    def generate_global_report(self, ssim_results, msssim_results, ssim_metrics, msssim_metrics):
+        """Generate comprehensive global analysis report"""
         report = "="*80 + "\n"
-        report += "🎉 BATCH ANALYSIS COMPLETE\n"
+        report += "🎉 global ANALYSIS COMPLETE\n"
         report += "="*80 + "\n\n"
         
         # Dataset info
